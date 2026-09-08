@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none';" />
+  <meta name="description" content="ShapeBound — a strategic two-player hexomino board game. Don't make a line. Make a shape." />
+  <title>ShapeBound — Don't make a line. Make a shape.</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#board">Skip to board</a>
+  <div class="world-backdrop" aria-hidden="true">
+    <div class="world-stars" id="world-stars"></div>
+    <div class="world-horizon"></div>
+    <div class="world-terrain terrain-far"></div>
+    <div class="world-terrain terrain-mid"></div>
+    <div class="world-terrain terrain-back"></div>
+    <div class="world-terrain terrain-front"></div>
+    <div class="world-ground-grid"></div>
+    <div class="world-fog fog-front"></div>
+    <div class="world-fog fog-back"></div>
+    <div class="world-atmosphere"></div>
+  </div>
+
+  <header class="app-header">
+    <div class="header-shell">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <div class="brand-copy">
+          <h1 class="brand-title">ShapeBound</h1>
+          <p class="brand-tagline">Don't make a line. Make a shape.</p>
+        </div>
+      </div>
+      <nav class="header-controls" aria-label="Game controls">
+        <div class="header-nav-group">
+          <button id="btn-how-to-play" class="header-nav-btn" type="button" aria-expanded="false" aria-controls="how-to-play-panel">How to Play</button>
+          <button id="btn-shape-guide" class="header-nav-btn" type="button" aria-expanded="false" aria-controls="shape-guide-panel">Shape Guide</button>
+          <button id="btn-game-lab" class="header-nav-btn" type="button" aria-expanded="false" aria-controls="game-lab-panel">Game Lab</button>
+        </div>
+        <span class="header-divider" aria-hidden="true"></span>
+        <button id="btn-practice" class="header-practice-btn" type="button">Practice Game</button>
+        <button id="btn-debug" class="header-nav-btn hidden" type="button" aria-pressed="false">Debug</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <!-- Left: status + score -->
+    <aside class="side-panel side-left" aria-label="Match information">
+      <section class="status-card" aria-live="polite" aria-atomic="true">
+        <h2 class="visually-hidden">Game status</h2>
+        <div id="status-text" class="status-text">Ready to play</div>
+        <div id="turn-info" class="turn-info">Turn 0</div>
+      </section>
+
+      <section class="score-card" aria-label="Match score">
+        <h2 class="card-title">Match Score</h2>
+        <div class="score-grid">
+          <div class="score-cell score-x">
+            <span class="score-symbol" aria-hidden="true">X</span>
+            <span class="score-label">Player X</span>
+            <span id="score-x" class="score-value">0</span>
+          </div>
+          <div class="score-cell score-o">
+            <span class="score-symbol" aria-hidden="true">O</span>
+            <span class="score-label">Player O</span>
+            <span id="score-o" class="score-value">0</span>
+          </div>
+          <div class="score-cell score-draw">
+            <span class="score-symbol" aria-hidden="true">=</span>
+            <span class="score-label">Draws</span>
+            <span id="score-draw" class="score-value">0</span>
+          </div>
+        </div>
+        <button id="btn-reset-stats" class="text-btn" type="button">Reset Statistics</button>
+      </section>
+
+      <section class="config-card" aria-label="Game configuration">
+        <h2 class="card-title">Setup</h2>
+        <label class="field">
+          <span class="field-label">Mode</span>
+          <select id="select-mode" class="select">
+            <option value="HUMAN_VS_HUMAN">Human vs Human</option>
+            <option value="HUMAN_VS_AI" selected>Human vs AI</option>
+            <option value="PRACTICE">Practice (vs AI)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">AI Difficulty</span>
+          <select id="select-difficulty" class="select">
+            <option value="EASY">Easy</option>
+            <option value="NORMAL" selected>Normal</option>
+            <option value="HARD">Hard</option>
+          </select>
+        </label>
+        <div class="config-actions">
+          <button id="btn-new-game" class="primary-btn" type="button">New Game</button>
+          <button id="btn-restart" class="secondary-btn" type="button">Restart Match</button>
+          <button id="btn-undo" class="secondary-btn" type="button" disabled>Undo</button>
+        </div>
+      </section>
+    </aside>
+
+    <!-- Center: board -->
+    <section class="board-section" aria-label="Game board">
+      <div id="board" class="board" role="grid" aria-label="6 by 6 game board" tabindex="0"></div>
+      <div id="win-banner" class="win-banner hidden" role="status" aria-live="assertive"></div>
+    </section>
+
+    <!-- Right: move log + post-game actions -->
+    <aside class="side-panel side-right" aria-label="Move log and tools">
+      <section class="log-card">
+        <h2 class="card-title">Move Log</h2>
+        <ol id="move-log" class="move-log" aria-label="List of moves"></ol>
+      </section>
+
+      <section class="post-game-card hidden" id="post-game-card" aria-label="Post-game tools">
+        <h2 class="card-title">Game Over</h2>
+        <div class="post-game-actions">
+          <button id="btn-replay" class="secondary-btn" type="button">Replay</button>
+          <button id="btn-analyze" class="secondary-btn" type="button">Analyze Game</button>
+          <button id="btn-whatif" class="secondary-btn" type="button">What If?</button>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <div class="world-sky" aria-hidden="true">
+    <div class="world-moon"></div>
+  </div>
+
+  <!-- Shape guide modal/panel -->
+  <section id="shape-guide-panel" class="overlay-panel hidden" aria-label="Shape guide" aria-hidden="true">
+    <div class="overlay-panel-inner">
+      <header class="overlay-header">
+        <h2>Hexomino Shape Guide</h2>
+        <button id="btn-close-shape-guide" class="icon-btn" type="button" aria-label="Close shape guide">&times;</button>
+      </header>
+      <p class="overlay-desc">There are 35 unique free hexominoes. Rotations and reflections count as the same shape. A win is any 6 of your pieces forming one of these.</p>
+      <div id="shape-guide-grid" class="shape-guide-grid"></div>
+      <div id="shape-guide-detail" class="shape-guide-detail" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- Game Lab modal -->
+  <section id="game-lab-panel" class="overlay-panel hidden" aria-label="Game Lab" aria-hidden="true">
+    <div class="overlay-panel-inner">
+      <header class="overlay-header">
+        <h2>Game Lab</h2>
+        <button id="btn-close-game-lab" class="icon-btn" type="button" aria-label="Close game lab">&times;</button>
+      </header>
+      <p class="overlay-desc">Experimental configuration. Production games default to 6×6, hexominoes, MAX_ACTIVE_PIECES = 6.</p>
+      <div class="lab-fields">
+        <label class="field">
+          <span class="field-label">Board Size</span>
+          <select id="lab-board-size" class="select">
+            <option value="6" selected>6</option>
+            <option value="7">7</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Max Active Pieces</span>
+          <input id="lab-max-pieces" class="input" type="number" min="6" max="12" value="6" />
+        </label>
+        <label class="field">
+          <span class="field-label">AI Strategy</span>
+          <select id="lab-ai-strategy" class="select">
+            <option value="EASY">Easy</option>
+            <option value="NORMAL" selected>Normal</option>
+            <option value="HARD">Hard</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Simulation Count</span>
+          <input id="lab-sim-count" class="input" type="number" min="100" max="10000" value="1000" />
+        </label>
+      </div>
+      <div class="lab-actions">
+        <button id="btn-lab-apply" class="primary-btn" type="button">Apply &amp; New Game</button>
+        <button id="btn-lab-simulate" class="secondary-btn" type="button">Run Simulations</button>
+      </div>
+      <pre id="lab-output" class="lab-output" aria-live="polite"></pre>
+    </div>
+  </section>
+
+  <!-- How to Play overlay -->
+  <section id="how-to-play-panel" class="overlay-panel hidden" aria-label="How to play" aria-hidden="true">
+    <div class="overlay-panel-inner">
+      <header class="overlay-header">
+        <h2>How to Play</h2>
+        <button id="btn-close-how-to-play" class="icon-btn" type="button" aria-label="Close how to play">&times;</button>
+      </header>
+      <div class="rules">
+        <section class="rule-block">
+          <h3>Objective</h3>
+          <p>Be the first to form <strong>exactly six</strong> of your pieces into one of the 35 hexomino shapes — anywhere on the 6×6 board. Don't make a line. Make a shape.</p>
+        </section>
+        <section class="rule-block">
+          <h3>On Your Turn</h3>
+          <p>Click any empty cell to place your symbol. Players alternate: <strong>X</strong> moves first, then <strong>O</strong>.</p>
+        </section>
+        <section class="rule-block">
+          <h3>Winning Shapes</h3>
+          <p>A win is any <strong>six orthogonally connected</strong> cells (up, down, left, right — no diagonals) matching one of the 35 hexominoes (H01–H35). Rotations and reflections count as the same shape. Your winning shape can appear anywhere on the board.</p>
+        </section>
+        <section class="rule-block">
+          <h3>Piece Lifetime</h3>
+          <p>Each player keeps up to <strong>6 active pieces</strong>. When you place a 7th piece, your <strong>oldest piece disappears</strong>. The oldest piece of each player shows a dashed warning ring.</p>
+        </section>
+        <section class="rule-block">
+          <h3>Win Before Expiration</h3>
+          <p>If your new piece completes a winning shape, you win <strong>immediately</strong> — no piece expires on a winning move.</p>
+        </section>
+        <section class="rule-block">
+          <h3>Draw</h3>
+          <p>A game ends in a draw if the same board position repeats 3 times, or after 200 turns.</p>
+        </section>
+        <section class="rule-block">
+          <h3>Modes</h3>
+          <p><strong>Human vs Human</strong> — two players, one device. <strong>Human vs AI</strong> — play against the computer (Easy / Normal / Hard). <strong>Practice</strong> — play against the AI without affecting your match score.</p>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <!-- Replay overlay -->
+  <section id="replay-panel" class="overlay-panel hidden" aria-label="Replay" aria-hidden="true">
+    <div class="overlay-panel-inner">
+      <header class="overlay-header">
+        <h2>Replay</h2>
+        <button id="btn-close-replay" class="icon-btn" type="button" aria-label="Close replay">&times;</button>
+      </header>
+      <div id="replay-board" class="board replay-board" role="grid" aria-label="Replay board"></div>
+      <div id="replay-info" class="replay-info" aria-live="polite"></div>
+      <div class="replay-controls">
+        <button id="replay-prev" class="secondary-btn" type="button">Previous</button>
+        <button id="replay-play" class="primary-btn" type="button">Play</button>
+        <button id="replay-pause" class="secondary-btn hidden" type="button">Pause</button>
+        <button id="replay-next" class="secondary-btn" type="button">Next</button>
+        <button id="replay-restart" class="secondary-btn" type="button">Restart Replay</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Analyzer overlay -->
+  <section id="analyzer-panel" class="overlay-panel hidden" aria-label="Game analyzer" aria-hidden="true">
+    <div class="overlay-panel-inner">
+      <header class="overlay-header">
+        <h2>Game Analysis</h2>
+        <button id="btn-close-analyzer" class="icon-btn" type="button" aria-label="Close analyzer">&times;</button>
+      </header>
+      <div id="analyzer-output" class="analyzer-output"></div>
+    </div>
+  </section>
+
+  <!-- What-If overlay -->
+  <section id="whatif-panel" class="overlay-panel hidden" aria-label="What if mode" aria-hidden="true">
+    <div class="overlay-panel-inner">
+      <header class="overlay-header">
+        <h2>What If?</h2>
+        <button id="btn-close-whatif" class="icon-btn" type="button" aria-label="Close what if">&times;</button>
+      </header>
+      <p class="overlay-desc">Select a move in the log to branch from. The original game is preserved. Play alternate moves on the board below.</p>
+      <div id="whatif-board" class="board whatif-board" role="grid" aria-label="What if board"></div>
+      <div id="whatif-info" class="whatif-info" aria-live="polite"></div>
+      <div class="whatif-controls">
+        <button id="whatif-back" class="secondary-btn" type="button">Back to Original</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Debug panel -->
+  <section id="debug-panel" class="debug-panel hidden" aria-label="Debug info" aria-hidden="true">
+    <h2 class="card-title">Debug</h2>
+    <pre id="debug-output" class="debug-output"></pre>
+  </section>
+
+  <!-- Confirm dialog -->
+  <div id="confirm-dialog" class="confirm-dialog hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="confirm-inner">
+      <h3 id="confirm-title">Confirm</h3>
+      <p id="confirm-message"></p>
+      <div class="confirm-actions">
+        <button id="confirm-yes" class="primary-btn" type="button">Yes</button>
+        <button id="confirm-no" class="secondary-btn" type="button">No</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="app-footer">
+    <p>ShapeBound — vanilla JS hexomino strategy game.</p>
+  </footer>
+
+  <!-- Scripts: order matters (dependencies first) -->
+  <script src="js/shape-engine.js?v=2"></script>
+  <script src="js/game-state.js?v=2"></script>
+  <script src="js/game-engine.js?v=2"></script>
+  <script src="js/ai.js?v=2"></script>
+  <script src="js/renderer.js?v=2"></script>
+  <script src="js/tests.js?v=2"></script>
+  <script src="js/main.js?v=2"></script>
+</body>
+</html>
