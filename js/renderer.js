@@ -58,6 +58,15 @@
         if (v === 0) {
           cell.classList.add('empty');
           cell.setAttribute('aria-label', 'Empty cell row ' + (r + 1) + ' column ' + (c + 1));
+          if (options.threats) {
+            if (options.threats.opp && options.threats.opp.has(key)) {
+              cell.classList.add('threat-opp');
+              cell.title = 'Defensive alert: Opponent threat!';
+            } else if (options.threats.self && options.threats.self.has(key)) {
+              cell.classList.add('threat-self');
+              cell.title = 'Winning move available!';
+            }
+          }
           if (options.interactive) {
             cell.tabIndex = 0;
           }
@@ -120,18 +129,32 @@
   function renderStatus(statusEl, turnEl, state) {
     const S = GameState.STATUS;
     let text = '';
-    const isAITurn = (state.mode === 'HUMAN_VS_AI' || state.mode === 'PRACTICE') &&
-      state.currentPlayer === state.aiPlayer;
+    const isAIMode = (state.mode === 'HUMAN_VS_AI' || state.mode === 'PRACTICE');
+    const isAITurn = isAIMode && state.currentPlayer === state.aiPlayer;
     switch (state.status) {
       case S.READY: text = 'Ready to play'; break;
       case S.PLAYING:
-        text = isAITurn
-          ? 'AI is thinking…'
-          : SYMBOL[state.currentPlayer] + "'s turn";
+        if (isAITurn) {
+          text = 'AI is thinking…';
+        } else if (isAIMode) {
+          text = 'Your turn (' + SYMBOL[state.currentPlayer] + ')';
+        } else {
+          text = SYMBOL[state.currentPlayer] + "'s turn";
+        }
         break;
-      case S.X_WON: text = 'X wins!'; break;
+      case S.X_WON:
+        if (isAIMode) {
+          text = (state.aiPlayer === GameState.PLAYER_X) ? 'AI (X) wins!' : 'You (X) win!';
+        } else {
+          text = 'X wins!';
+        }
+        break;
       case S.O_WON:
-        text = state.mode === 'HUMAN_VS_AI' || state.mode === 'PRACTICE' ? 'AI (O) wins!' : 'O wins!';
+        if (isAIMode) {
+          text = (state.aiPlayer === GameState.PLAYER_O) ? 'AI (O) wins!' : 'You (O) win!';
+        } else {
+          text = 'O wins!';
+        }
         break;
       case S.DRAW: text = 'Draw'; break;
       default: text = '';
@@ -213,7 +236,7 @@
     bannerEl.appendChild(document.createTextNode(' hexomino!'));
     // Show the winning shape as a mini SVG so the user can see the actual
     // formation (which may be rotated/reflected from the canonical letter).
-    if (state.winInfo.cells && state.winInfo.cells.length === 5) {
+    if (state.winInfo.cells && (state.winInfo.cells.length === 6 || state.winInfo.cells.length === 5)) {
       const previewWrap = document.createElement('span');
       previewWrap.className = 'win-shape-preview';
       previewWrap.setAttribute('aria-hidden', 'true');
@@ -323,6 +346,158 @@
     outputEl.textContent = lines.join('\n');
   }
 
+  // ---- Shape Codex ------------------------------------------------------
+
+  function renderCodex(containerEl, codexModule, shapeEngine) {
+    containerEl.innerHTML = '';
+    const shapes = codexModule.getAllShapesWithProgress();
+    shapes.forEach(function (s) {
+      const card = document.createElement('div');
+      card.className = 'codex-card' + (s.unlocked ? ' unlocked' : ' locked');
+
+      const header = document.createElement('div');
+      header.className = 'codex-card-header';
+      const codeSpan = document.createElement('span');
+      codeSpan.className = 'codex-code';
+      codeSpan.textContent = s.code;
+      const typeSpan = document.createElement('span');
+      typeSpan.className = 'codex-type';
+      typeSpan.textContent = s.type;
+      header.appendChild(codeSpan);
+      header.appendChild(typeSpan);
+      card.appendChild(header);
+
+      const preview = document.createElement('div');
+      preview.className = 'codex-preview';
+      const baseCells = shapeEngine.BASE_HEXOMINOES[s.code] || [[0,0]];
+      const svg = shapeToSVG(baseCells, s.unlocked ? '#DAC0A3' : 'rgba(218,192,163,0.22)', 18);
+      preview.appendChild(svg);
+      card.appendChild(preview);
+
+      const nameEl = document.createElement('div');
+      nameEl.className = 'codex-name';
+      nameEl.textContent = s.unlocked ? s.name : 'Unknown Shape';
+      card.appendChild(nameEl);
+
+      const aliasEl = document.createElement('div');
+      aliasEl.className = 'codex-alias';
+      aliasEl.textContent = s.unlocked ? '“' + s.alias + '”' : 'Undiscovered';
+      card.appendChild(aliasEl);
+
+      const statsEl = document.createElement('div');
+      statsEl.className = 'codex-stats';
+      statsEl.textContent = s.unlocked ? (s.wins + ' Win' + (s.wins === 1 ? '' : 's')) : 'Complete in match to unlock';
+      card.appendChild(statsEl);
+
+      containerEl.appendChild(card);
+    });
+  }
+
+  // ---- Daily Puzzle Board ------------------------------------------------
+
+  function renderDailyPuzzle(boardEl, puzzle, onCellClick) {
+    boardEl.innerHTML = '';
+    boardEl.style.gridTemplateColumns = 'repeat(6, 1fr)';
+    boardEl.style.gridTemplateRows = 'repeat(6, 1fr)';
+
+    const xSet = new Set(puzzle.xCells.map(function (c) { return c[0] + ',' + c[1]; }));
+    const oSet = new Set(puzzle.oCells.map(function (c) { return c[0] + ',' + c[1]; }));
+
+    for (let r = 0; r < 6; r++) {
+      for (let c = 0; c < 6; c++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.row = r;
+        cell.dataset.col = c;
+        const key = r + ',' + c;
+
+        if (xSet.has(key)) {
+          cell.classList.add('x');
+          const mark = document.createElement('span');
+          mark.className = 'mark';
+          mark.textContent = 'X';
+          cell.appendChild(mark);
+        } else if (oSet.has(key)) {
+          cell.classList.add('o');
+          const mark = document.createElement('span');
+          mark.className = 'mark';
+          mark.textContent = 'O';
+          cell.appendChild(mark);
+        } else {
+          cell.classList.add('empty');
+          cell.tabIndex = 0;
+          cell.addEventListener('click', function () {
+            if (onCellClick) onCellClick(r, c);
+          });
+        }
+        boardEl.appendChild(cell);
+      }
+    }
+  }
+
+  // ---- Victory Particles -------------------------------------------------
+
+  function spawnVictoryParticles(containerEl) {
+    const canvas = document.createElement('canvas');
+    canvas.className = 'victory-particles-canvas';
+    canvas.style.position = 'absolute';
+    canvas.style.inset = '0';
+    canvas.style.pointerEvents = 'none';
+    canvas.style.zIndex = '50';
+    containerEl.style.position = 'relative';
+    containerEl.appendChild(canvas);
+
+    const rect = containerEl.getBoundingClientRect();
+    canvas.width = rect.width || 400;
+    canvas.height = rect.height || 400;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const colors = ['#DAC0A3', '#EADBC8', '#F8F0E5', '#4A90E2', '#50E3C2'];
+    const particles = [];
+    for (let i = 0; i < 60; i++) {
+      particles.push({
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        vx: (Math.random() - 0.5) * 8,
+        vy: (Math.random() - 0.5) * 8 - 2,
+        radius: Math.random() * 3 + 2,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        alpha: 1,
+        life: 0.95
+      });
+    }
+
+    let animId;
+    function animate() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      let alive = false;
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.12; // gravity
+        p.alpha *= p.life;
+        if (p.alpha > 0.01) {
+          alive = true;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = p.alpha;
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+      if (alive) {
+        animId = requestAnimationFrame(animate);
+      } else {
+        cancelAnimationFrame(animId);
+        if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+      }
+    }
+    animate();
+  }
+
   const Renderer = {
     renderBoard: renderBoard,
     clearPreview: clearPreview,
@@ -332,6 +507,9 @@
     renderMoveLog: renderMoveLog,
     renderWinBanner: renderWinBanner,
     renderShapeGuide: renderShapeGuide,
+    renderCodex: renderCodex,
+    renderDailyPuzzle: renderDailyPuzzle,
+    spawnVictoryParticles: spawnVictoryParticles,
     renderDebug: renderDebug,
     colLetter: colLetter,
     shapeToSVG: shapeToSVG

@@ -276,6 +276,43 @@
     return { won: false };
   }
 
+  /**
+   * Find all legal moves that would immediately complete a hexomino for a player.
+   * Returns array of { row, col, shape, cells }.
+   */
+  function findThreats(library, occupiedCells, legalMoves) {
+    const occupied = new Set(occupiedCells.map(function (p) { return p[0] + ',' + p[1]; }));
+    const threats = [];
+    const seen = new Set();
+    const placements = library.allPlacements;
+    for (let m = 0; m < legalMoves.length; m++) {
+      const cell = legalMoves[m];
+      const ck = cell[0] + ',' + cell[1];
+      for (let i = 0; i < placements.length; i++) {
+        const pl = placements[i];
+        let containsCell = false;
+        let otherMissing = false;
+        for (let j = 0; j < pl.cells.length; j++) {
+          const k = pl.cells[j][0] + ',' + pl.cells[j][1];
+          if (k === ck) {
+            containsCell = true;
+          } else if (!occupied.has(k)) {
+            otherMissing = true;
+            break;
+          }
+        }
+        if (containsCell && !otherMissing) {
+          if (!seen.has(ck)) {
+            seen.add(ck);
+            threats.push({ row: cell[0], col: cell[1], shape: pl.shape, cells: pl.cells.slice() });
+          }
+          break;
+        }
+      }
+    }
+    return threats;
+  }
+
   // ---- Validation --------------------------------------------------------
 
   /**
@@ -322,6 +359,7 @@
     buildLibrary: buildLibrary,
     checkWin: checkWin,
     checkWinAt: checkWinAt,
+    findThreats: findThreats,
     validateLibrary: validateLibrary,
     cellsKey: cellsKey,
     compareCells: compareCells

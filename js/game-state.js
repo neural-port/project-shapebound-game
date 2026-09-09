@@ -69,6 +69,20 @@
     if (maxActivePieces < 6) {
       throw new Error('maxActivePieces must be >= 6 to allow a 6-cell win');
     }
+    const isAIMode = options.mode === 'HUMAN_VS_AI' || options.mode === 'PRACTICE';
+    let humanPlayer = PLAYER_X;
+    if (options.humanPlayer === PLAYER_O || options.humanPlayer === 2) {
+      humanPlayer = PLAYER_O;
+    }
+    let aiPlayer = null;
+    if (isAIMode) {
+      if (options.aiPlayer !== undefined && options.aiPlayer !== null) {
+        aiPlayer = options.aiPlayer;
+      } else {
+        aiPlayer = (humanPlayer === PLAYER_X) ? PLAYER_O : PLAYER_X;
+      }
+    }
+
     const state = {
       boardSize: boardSize,
       maxActivePieces: maxActivePieces,
@@ -83,7 +97,8 @@
       stateHistory: [],
       mode: options.mode || 'HUMAN_VS_HUMAN',
       aiDifficulty: options.aiDifficulty || null,
-      aiPlayer: (options.mode === 'HUMAN_VS_AI' || options.mode === 'PRACTICE') ? PLAYER_O : null,
+      aiPlayer: aiPlayer,
+      humanPlayer: humanPlayer,
       maxTurns: options.maxTurns || DEFAULTS.maxTurns,
       repeatDrawThreshold: options.repeatDrawThreshold || DEFAULTS.repeatDrawThreshold
     };
@@ -112,6 +127,7 @@
       mode: state.mode,
       aiDifficulty: state.aiDifficulty,
       aiPlayer: state.aiPlayer,
+      humanPlayer: state.humanPlayer,
       maxTurns: state.maxTurns,
       repeatDrawThreshold: state.repeatDrawThreshold
     };

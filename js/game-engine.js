@@ -174,6 +174,7 @@
     state.mode = snap.mode;
     state.aiDifficulty = snap.aiDifficulty;
     state.aiPlayer = snap.aiPlayer;
+    state.humanPlayer = snap.humanPlayer;
     state.maxTurns = snap.maxTurns;
     state.repeatDrawThreshold = snap.repeatDrawThreshold;
     return true;

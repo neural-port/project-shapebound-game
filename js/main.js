@@ -15,6 +15,10 @@
   const SE = window.ShapeEngine;
   const R = window.Renderer;
   const Tests = window.Tests;
+  const Audio = window.AudioEngine;
+  const Codex = window.Codex;
+  const DailyPuzzle = window.DailyPuzzle;
+  const Notation = window.Notation;
 
   // ---- DOM refs ----------------------------------------------------------
   const $ = function (id) { return document.getElementById(id); };
@@ -41,6 +45,12 @@
   let debugMode = new URLSearchParams(window.location.search).has('debug');
   let replayState = null;   // { history, index, timer }
   let whatifState = null;   // { branch: GameState, baseIndex }
+  let activePuzzle = null;
+  let threatRadarEnabled = true;
+  let clockLimit = 0;
+  let clockRemaining = 0;
+  let clockInterval = null;
+  const THEME_KEY = 'shapebound_theme_v1';
 
   // ---- Stats persistence -------------------------------------------------
   const STATS_KEY = 'shapebound_stats_v1';
@@ -77,7 +87,29 @@
     saveStats();
     renderScore();
   }
-  function renderScore() { R.renderScore(scoreXEl, scoreOEl, scoreDrawEl, stats); }
+  function renderScore() {
+    R.renderScore(scoreXEl, scoreOEl, scoreDrawEl, stats);
+    renderScoreLabels();
+  }
+
+  function renderScoreLabels() {
+    const labelX = $('score-label-x');
+    const labelO = $('score-label-o');
+    if (!labelX || !labelO) return;
+    const isAIMode = state && (state.mode === 'HUMAN_VS_AI' || state.mode === 'PRACTICE');
+    if (isAIMode) {
+      if (state.aiPlayer === GS.PLAYER_X) {
+        labelX.textContent = 'Player X (AI)';
+        labelO.textContent = 'Player O (You)';
+      } else {
+        labelX.textContent = 'Player X (You)';
+        labelO.textContent = 'Player O (AI)';
+      }
+    } else {
+      labelX.textContent = 'Player X';
+      labelO.textContent = 'Player O';
+    }
+  }
 
   // ---- Core render -------------------------------------------------------
   function isAITurn() {
@@ -86,8 +118,24 @@
   }
 
   function renderAll() {
+    let threats = null;
+    if (threatRadarEnabled && state.status === GS.STATUS.PLAYING) {
+      const opp = state.currentPlayer === GS.PLAYER_X ? GS.PLAYER_O : GS.PLAYER_X;
+      const occSelf = GS.occupiedCells(state, state.currentPlayer);
+      const occOpp = GS.occupiedCells(state, opp);
+      const legal = GE.getLegalMoves(state);
+      const lib = GE.getLibrary(state.boardSize);
+      const tSelf = SE.findThreats(lib, occSelf, legal);
+      const tOpp = SE.findThreats(lib, occOpp, legal);
+      threats = {
+        self: new Set(tSelf.map(function (t) { return t.row + ',' + t.col; })),
+        opp: new Set(tOpp.map(function (t) { return t.row + ',' + t.col; }))
+      };
+    }
+
     R.renderBoard(boardEl, state, {
       interactive: state.status === GS.STATUS.PLAYING && !aiThinking && !isAITurn(),
+      threats: threats,
       onCellClick: onCellClick,
       onCellHover: onCellHover
     });
@@ -100,6 +148,7 @@
     } else {
       postGameCard.classList.add('hidden');
     }
+    updateCodexBadge();
     if (debugMode) renderDebug();
   }
 
@@ -129,9 +178,22 @@
 
   function playMove(row, col) {
     if (!GE.isLegalMove(state, row, col)) return;
+    const movingPlayer = state.currentPlayer;
     undoStack.push(GS.snapshot(state));
     const res = GE.applyMove(state, row, col);
     if (!res.ok) { undoStack.pop(); return; }
+    if (Audio) Audio.playPlace(movingPlayer, row, col);
+    if (res.expired && Audio) Audio.playExpire();
+    if (res.ended && res.winInfo && res.winInfo.won) {
+      if (Audio) Audio.playWin();
+      if (Codex) {
+        Codex.registerWin(res.winInfo.shape, state.mode, state.aiDifficulty);
+        updateCodexBadge();
+      }
+      R.spawnVictoryParticles(boardEl);
+      stopClock();
+    }
+    resetTurnClock();
     renderAll();
     if (res.ended) { bumpStats(); return; }
     maybeAIMove();
@@ -152,9 +214,20 @@
       if (err) { renderAll(); return; }
       if (!move) { renderAll(); return; }
       if (state.status !== GS.STATUS.PLAYING) { renderAll(); return; }
-      // Undo for AI move is folded with the human's previous move: we keep
-      // the snapshot taken before the human move, so one Undo reverses both.
+      const movingPlayer = state.currentPlayer;
       const res = GE.applyMove(state, move[0], move[1]);
+      if (Audio) Audio.playPlace(movingPlayer, move[0], move[1]);
+      if (res.expired && Audio) Audio.playExpire();
+      if (res.ended && res.winInfo && res.winInfo.won) {
+        if (Audio) Audio.playWin();
+        if (Codex) {
+          Codex.registerWin(res.winInfo.shape, state.mode, state.aiDifficulty);
+          updateCodexBadge();
+        }
+        R.spawnVictoryParticles(boardEl);
+        stopClock();
+      }
+      resetTurnClock();
       renderAll();
       if (res.ended) bumpStats();
     });
@@ -164,7 +237,6 @@
   function doUndo() {
     if (!undoStack.length) return;
     if (aiThinking) return;  // don't undo while AI is thinking
-    // Pop AI move first (if AI mode and last move was AI's).
     const hasAI = state.mode === 'HUMAN_VS_AI' || state.mode === 'PRACTICE';
     if (hasAI && undoStack.length >= 2 &&
         state.moveHistory.length >= 2 &&
@@ -174,30 +246,47 @@
     } else {
       GE.undo(state, undoStack);
     }
+    if (Audio) Audio.playUndo();
     aiToken++;  // invalidate any pending AI callback
+    resetTurnClock();
     renderAll();
   }
 
   // ---- New game / restart ------------------------------------------------
   function newGame() {
     aiToken++;  // invalidate any pending AI callback
+    stopClock();
     const mode = $('select-mode').value;
     const difficulty = $('select-difficulty').value;
+    const playerSelect = $('select-player');
+    const playerChoice = playerSelect ? Number(playerSelect.value) : 1;
+    const humanPlayer = (playerChoice === 2) ? GS.PLAYER_O : GS.PLAYER_X;
+    const aiPlayer = (mode === 'HUMAN_VS_AI' || mode === 'PRACTICE')
+      ? (humanPlayer === GS.PLAYER_X ? GS.PLAYER_O : GS.PLAYER_X)
+      : null;
+
+    threatRadarEnabled = $('select-threat-radar') ? $('select-threat-radar').value === 'ON' : true;
+
     state = GS.createInitialState({
       mode: mode,
-      aiDifficulty: (mode === 'HUMAN_VS_AI' || mode === 'PRACTICE') ? difficulty : null
+      aiDifficulty: (mode === 'HUMAN_VS_AI' || mode === 'PRACTICE') ? difficulty : null,
+      aiPlayer: aiPlayer,
+      humanPlayer: humanPlayer
     });
     undoStack = [];
     replayState = null;
     whatifState = null;
     GE.startGame(state);
+    renderScoreLabels();
     renderAll();
+    startClock();
     maybeAIMove();
   }
 
   function startPractice() {
     $('select-mode').value = 'PRACTICE';
     $('select-difficulty').disabled = false;
+    if ($('select-player')) $('select-player').disabled = false;
     newGame();
   }
 
@@ -546,10 +635,220 @@
     }
   }
 
+  // ---- Chess Clock ------------------------------------------------------
+
+  function startClock() {
+    stopClock();
+    const select = $('select-clock');
+    clockLimit = select && select.value !== 'OFF' ? Number(select.value) : 0;
+    const container = $('clock-bar-container');
+    if (!clockLimit || state.status !== GS.STATUS.PLAYING) {
+      if (container) container.classList.add('hidden');
+      return;
+    }
+    if (container) container.classList.remove('hidden');
+    clockRemaining = clockLimit;
+    updateClockDisplay();
+    clockInterval = setInterval(tickClock, 1000);
+  }
+
+  function stopClock() {
+    if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+  }
+
+  function resetTurnClock() {
+    if (!clockLimit || state.status !== GS.STATUS.PLAYING) return;
+    clockRemaining = clockLimit;
+    updateClockDisplay();
+  }
+
+  function tickClock() {
+    if (state.status !== GS.STATUS.PLAYING) { stopClock(); return; }
+    clockRemaining--;
+    updateClockDisplay();
+    if (clockRemaining <= 3 && clockRemaining > 0 && Audio) {
+      Audio.playTick();
+    }
+    if (clockRemaining <= 0) {
+      stopClock();
+      state.status = state.currentPlayer === GS.PLAYER_X ? GS.STATUS.O_WON : GS.STATUS.X_WON;
+      state.winner = state.currentPlayer === GS.PLAYER_X ? GS.PLAYER_O : GS.PLAYER_X;
+      statusEl.textContent = (state.winner === GS.PLAYER_X ? 'Player X' : 'Player O') + ' wins on time!';
+      bumpStats();
+      renderAll();
+    }
+  }
+
+  function updateClockDisplay() {
+    const fill = $('clock-bar-fill');
+    if (!fill || !clockLimit) return;
+    const pct = Math.max(0, Math.min(100, (clockRemaining / clockLimit) * 100));
+    fill.style.width = pct + '%';
+    fill.className = 'clock-bar-fill';
+    if (pct <= 25) fill.classList.add('critical');
+    else if (pct <= 50) fill.classList.add('warning');
+  }
+
+  // ---- Themes ------------------------------------------------------------
+
+  function initTheme() {
+    let savedTheme = 'tactical';
+    try { savedTheme = localStorage.getItem(THEME_KEY) || 'tactical'; } catch (e) {}
+    applyTheme(savedTheme);
+    if ($('select-theme')) $('select-theme').value = savedTheme;
+  }
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
+  }
+
+  // ---- Shape Codex -------------------------------------------------------
+
+  function openCodex() {
+    const panel = $('codex-panel');
+    panel.classList.remove('hidden');
+    panel.setAttribute('aria-hidden', 'false');
+    R.renderCodex($('codex-grid'), Codex, SE);
+  }
+  function closeCodex() {
+    const panel = $('codex-panel');
+    panel.classList.add('hidden');
+    panel.setAttribute('aria-hidden', 'true');
+  }
+  function updateCodexBadge() {
+    const badge = $('codex-badge');
+    if (badge && Codex) badge.textContent = '(' + Codex.getUnlockedCount() + '/35)';
+  }
+
+  // ---- Daily Puzzle ------------------------------------------------------
+
+  function openDailyPuzzle() {
+    const panel = $('daily-puzzle-panel');
+    panel.classList.remove('hidden');
+    panel.setAttribute('aria-hidden', 'false');
+    loadDailyPuzzle();
+  }
+  function closeDailyPuzzle() {
+    const panel = $('daily-puzzle-panel');
+    panel.classList.add('hidden');
+    panel.setAttribute('aria-hidden', 'true');
+  }
+  function loadDailyPuzzle() {
+    if (!DailyPuzzle) return;
+    activePuzzle = DailyPuzzle.generateDailyPuzzle(SE);
+    const title = $('daily-puzzle-title');
+    const desc = $('daily-puzzle-desc');
+    const status = $('daily-puzzle-status');
+    const shareBtn = $('btn-daily-share');
+    if (title) title.textContent = 'Daily Puzzle (' + activePuzzle.dateKey + ')';
+    if (desc) desc.textContent = 'Target: ' + activePuzzle.shapeName + '. Click the winning square for X!';
+    if (status) {
+      if (activePuzzle.isSolved) {
+        status.className = 'daily-banner success';
+        status.textContent = 'Already solved today! Streak: ' + activePuzzle.streak + ' 🔥';
+        status.classList.remove('hidden');
+        if (shareBtn) shareBtn.classList.remove('hidden');
+      } else {
+        status.classList.add('hidden');
+        if (shareBtn) shareBtn.classList.add('hidden');
+      }
+    }
+    R.renderDailyPuzzle($('daily-puzzle-board'), activePuzzle, onDailyCellClick);
+  }
+  function onDailyCellClick(r, c) {
+    if (!activePuzzle) return;
+    const isWin = r === activePuzzle.winningMove[0] && c === activePuzzle.winningMove[1];
+    const status = $('daily-puzzle-status');
+    const shareBtn = $('btn-daily-share');
+    if (isWin) {
+      const streak = DailyPuzzle.markSolved(activePuzzle.dateKey);
+      activePuzzle.isSolved = true;
+      activePuzzle.streak = streak;
+      if (status) {
+        status.className = 'daily-banner success';
+        status.textContent = 'Solved in 1 move! ' + activePuzzle.shapeName + ' formed! Streak: ' + streak + ' 🔥';
+        status.classList.remove('hidden');
+      }
+      if (shareBtn) shareBtn.classList.remove('hidden');
+      if (Audio) Audio.playWin();
+      R.spawnVictoryParticles($('daily-puzzle-board'));
+    } else {
+      if (status) {
+        status.className = 'daily-banner error';
+        status.textContent = 'Not quite! That does not complete ' + activePuzzle.shapeName + '. Try another cell.';
+        status.classList.remove('hidden');
+      }
+      if (Audio) Audio.playUndo();
+    }
+  }
+
+  // ---- PGN Notation Export / Import --------------------------------------
+
+  function openExportGame() {
+    const dialog = $('notation-dialog');
+    const title = $('notation-dialog-title');
+    const text = $('notation-text');
+    const copyBtn = $('btn-notation-copy');
+    const applyBtn = $('btn-notation-apply');
+    if (!dialog || !text) return;
+    title.textContent = 'Export Game PGN';
+    text.value = Notation ? Notation.exportGame(state) : '';
+    text.readOnly = true;
+    copyBtn.classList.remove('hidden');
+    applyBtn.classList.add('hidden');
+    dialog.classList.remove('hidden');
+  }
+
+  function openImportGame() {
+    const dialog = $('notation-dialog');
+    const title = $('notation-dialog-title');
+    const text = $('notation-text');
+    const copyBtn = $('btn-notation-copy');
+    const applyBtn = $('btn-notation-apply');
+    if (!dialog || !text) return;
+    title.textContent = 'Import Game Notation';
+    text.value = '';
+    text.readOnly = false;
+    text.placeholder = 'Paste PGN or algebraic move notation (e.g. 1. C3 D4 2. C4 E4...)';
+    copyBtn.classList.add('hidden');
+    applyBtn.classList.remove('hidden');
+    dialog.classList.remove('hidden');
+  }
+
+  function closeNotationDialog() {
+    const dialog = $('notation-dialog');
+    if (dialog) dialog.classList.add('hidden');
+  }
+
+  function applyImportedGame() {
+    if (!Notation) return;
+    const text = $('notation-text').value;
+    const moves = Notation.parseMoves(text);
+    if (!moves.length) {
+      alert('No valid moves found in notation.');
+      return;
+    }
+    closeNotationDialog();
+    state = GS.createInitialState({ boardSize: 6, maxActivePieces: 6, mode: 'HUMAN_VS_HUMAN' });
+    GE.startGame(state);
+    for (let i = 0; i < moves.length; i++) {
+      if (state.status === GS.STATUS.PLAYING) {
+        GE.applyMove(state, moves[i][0], moves[i][1]);
+      }
+    }
+    renderAll();
+    openReplay();
+  }
+
   // ---- Mode/difficulty change -------------------------------------------
   function onModeChange() {
     const mode = $('select-mode').value;
-    $('select-difficulty').disabled = mode === 'HUMAN_VS_HUMAN';
+    const isHumanVsHuman = mode === 'HUMAN_VS_HUMAN';
+    $('select-difficulty').disabled = isHumanVsHuman;
+    if ($('select-player')) {
+      $('select-player').disabled = isHumanVsHuman;
+    }
+    renderScoreLabels();
   }
 
   // ---- Wire events -------------------------------------------------------
@@ -559,6 +858,39 @@
     $('btn-undo').addEventListener('click', doUndo);
     $('btn-reset-stats').addEventListener('click', resetStats);
     $('select-mode').addEventListener('change', onModeChange);
+    if ($('select-player')) {
+      $('select-player').addEventListener('change', function () {
+        newGame();
+      });
+    }
+    if ($('select-threat-radar')) {
+      $('select-threat-radar').addEventListener('change', function () {
+        threatRadarEnabled = this.value === 'ON';
+        renderAll();
+      });
+    }
+    if ($('select-clock')) {
+      $('select-clock').addEventListener('change', function () {
+        startClock();
+      });
+    }
+    if ($('select-theme')) {
+      $('select-theme').addEventListener('change', function () {
+        applyTheme(this.value);
+      });
+    }
+
+    const soundBtn = $('btn-sound');
+    if (soundBtn && Audio) {
+      soundBtn.textContent = Audio.isMuted() ? '🔇 Muted' : '🔊 Sound';
+      soundBtn.setAttribute('aria-pressed', String(!Audio.isMuted()));
+      soundBtn.addEventListener('click', function () {
+        const muted = Audio.toggleMute();
+        soundBtn.textContent = muted ? '🔇 Muted' : '🔊 Sound';
+        soundBtn.setAttribute('aria-pressed', String(!muted));
+        if (!muted) Audio.playClick();
+      });
+    }
 
     $('btn-how-to-play').addEventListener('click', openHowToPlay);
     $('btn-close-how-to-play').addEventListener('click', closeHowToPlay);
@@ -566,6 +898,37 @@
 
     $('btn-shape-guide').addEventListener('click', openShapeGuide);
     $('btn-close-shape-guide').addEventListener('click', closeShapeGuide);
+
+    $('btn-codex').addEventListener('click', openCodex);
+    $('btn-close-codex').addEventListener('click', closeCodex);
+
+    $('btn-daily').addEventListener('click', openDailyPuzzle);
+    $('btn-close-daily').addEventListener('click', closeDailyPuzzle);
+    $('btn-daily-reset').addEventListener('click', loadDailyPuzzle);
+    $('btn-daily-share').addEventListener('click', function () {
+      if (activePuzzle && DailyPuzzle) {
+        const text = DailyPuzzle.generateShareCard(activePuzzle, 1);
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(text).then(function () {
+            alert('Daily Puzzle result copied to clipboard! Ready to paste into chat.');
+          }).catch(function () {});
+        }
+      }
+    });
+
+    $('btn-export-game').addEventListener('click', openExportGame);
+    $('btn-import-game').addEventListener('click', openImportGame);
+    $('btn-notation-close').addEventListener('click', closeNotationDialog);
+    $('btn-notation-copy').addEventListener('click', function () {
+      const text = $('notation-text').value;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(function () {
+          alert('PGN notation copied to clipboard!');
+        }).catch(function () {});
+      }
+    });
+    $('btn-notation-apply').addEventListener('click', applyImportedGame);
+
     $('btn-game-lab').addEventListener('click', openGameLab);
     $('btn-close-game-lab').addEventListener('click', closeGameLab);
     $('btn-lab-apply').addEventListener('click', applyLab);
@@ -596,16 +959,19 @@
     // Keyboard: Escape closes overlays.
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
-        closeHowToPlay(); closeShapeGuide(); closeGameLab(); closeReplay(); closeAnalyzer(); closeWhatIf(); closeConfirm();
+        closeHowToPlay(); closeShapeGuide(); closeCodex(); closeDailyPuzzle(); closeNotationDialog();
+        closeGameLab(); closeReplay(); closeAnalyzer(); closeWhatIf(); closeConfirm();
       }
     });
   }
 
   // ---- Boot --------------------------------------------------------------
   function boot() {
+    initTheme();
     wire();
     renderScore();
     onModeChange();
+    updateCodexBadge();
     if (debugMode) {
       debugBtn.classList.remove('hidden');
       debugPanel.classList.remove('hidden');

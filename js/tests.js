@@ -18,12 +18,19 @@
     require('./game-state.js');
     require('./game-engine.js');
     require('./ai.js');
+    require('./audio.js');
+    require('./codex.js');
+    require('./daily-puzzle.js');
+    require('./notation.js');
   }
 
   const ShapeEngine = global.ShapeEngine;
   const GameState = global.GameState;
   const GameEngine = global.GameEngine;
   const AI = global.AI;
+  const Codex = global.Codex;
+  const DailyPuzzle = global.DailyPuzzle;
+  const Notation = global.Notation;
 
   let passed = 0, failed = 0;
   const failures = [];
@@ -308,7 +315,7 @@
       }
       assert(s.status !== GameState.STATUS.PLAYING || moves >= 80, 'AI game terminates');
 
-      // Practice mode assigns AI as O.
+      // Practice mode assigns AI as O by default.
       s = GameState.createInitialState({ boardSize: 6, maxActivePieces: 6, mode: 'PRACTICE', aiDifficulty: 'EASY' });
       assertEqual(s.aiPlayer, GameState.PLAYER_O, 'Practice mode assigns AI as O');
       GameEngine.startGame(s);
@@ -316,6 +323,36 @@
       assertEqual(s.currentPlayer, GameState.PLAYER_O, 'Practice: O to move after X');
       const practiceMove = AI.chooseMove(s, 'EASY');
       assert(practiceMove && s.board[practiceMove[0]][practiceMove[1]] === 0, 'Practice AI picks empty cell');
+
+      // Human selects O: AI plays as X and moves first.
+      const sO = GameState.createInitialState({
+        boardSize: 6,
+        maxActivePieces: 6,
+        mode: 'HUMAN_VS_AI',
+        humanPlayer: GameState.PLAYER_O,
+        aiDifficulty: 'EASY'
+      });
+      assertEqual(sO.humanPlayer, GameState.PLAYER_O, 'Human is player O');
+      assertEqual(sO.aiPlayer, GameState.PLAYER_X, 'AI is assigned player X');
+      assertEqual(sO.currentPlayer, GameState.PLAYER_X, 'Turn 1 starts with X (AI to move)');
+      GameEngine.startGame(sO);
+      const aiFirstMove = AI.chooseMove(sO, 'EASY');
+      assert(aiFirstMove && aiFirstMove.length === 2, 'AI chooses valid opening move as X');
+      const firstMoveRes = GameEngine.applyMove(sO, aiFirstMove[0], aiFirstMove[1]);
+      assert(firstMoveRes.ok, 'AI opening move applied successfully');
+      assertEqual(sO.currentPlayer, GameState.PLAYER_O, 'After AI move 1, it is human O turn');
+
+      // Clone and snapshot retain humanPlayer and aiPlayer.
+      const cloned = GameState.cloneState(sO);
+      assertEqual(cloned.humanPlayer, GameState.PLAYER_O, 'cloneState retains humanPlayer');
+      assertEqual(cloned.aiPlayer, GameState.PLAYER_X, 'cloneState retains aiPlayer');
+
+      const snap = GameState.snapshot(sO);
+      const undoStack = [snap];
+      GameEngine.applyMove(sO, 1, 1);
+      GameEngine.undo(sO, undoStack);
+      assertEqual(sO.humanPlayer, GameState.PLAYER_O, 'undo restores humanPlayer');
+      assertEqual(sO.aiPlayer, GameState.PLAYER_X, 'undo restores aiPlayer');
     });
   }
 
@@ -393,6 +430,69 @@
     };
   }
 
+  // ---- Threat Radar tests ------------------------------------------------
+  function testThreatRadar() {
+    suite('THREAT_RADAR', function () {
+      const lib = ShapeEngine.buildLibrary(6);
+      // Construct a 5-cell line [0,0] to [0,4]. Cell [0,5] completes H01 (the 6-cell line).
+      const occ = [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]];
+      const legal = [[0, 5], [1, 1], [2, 2]];
+      const threats = ShapeEngine.findThreats(lib, occ, legal);
+      assert(threats.length > 0, 'findThreats identifies at least one threat');
+      const foundWinning = threats.some(function (t) { return t.row === 0 && t.col === 5; });
+      assert(foundWinning, 'findThreats detects cell [0,5] as threat for H01');
+    });
+  }
+
+  // ---- Shape Codex tests -------------------------------------------------
+  function testCodex() {
+    suite('CODEX', function () {
+      const all = Codex.getAllShapesWithProgress();
+      assertEqual(all.length, 35, 'Codex lists all 35 shapes');
+      const h01 = Codex.getShapeInfo('H01');
+      assertEqual(h01.name, 'The Monolith', 'H01 is The Monolith');
+      const res = Codex.registerWin('H01', 'HUMAN_VS_AI', 'HARD');
+      assert(res && res.shapeCode === 'H01', 'registerWin records win');
+      assert(Codex.getUnlockedCount() >= 1, 'Unlocked count increments');
+    });
+  }
+
+  // ---- Daily Puzzle tests ------------------------------------------------
+  function testDailyPuzzle() {
+    suite('DAILY_PUZZLE', function () {
+      const p1 = DailyPuzzle.generateDailyPuzzle(ShapeEngine);
+      const p2 = DailyPuzzle.generateDailyPuzzle(ShapeEngine);
+      assertEqual(p1.dateKey, p2.dateKey, 'Daily puzzle dateKey is consistent');
+      assertEqual(p1.shapeName, p2.shapeName, 'Daily puzzle target shape is deterministic');
+      assertEqual(p1.xCells.length, 5, 'Daily puzzle pre-places 5 X cells');
+      assert(p1.oCells.length >= 4, 'Daily puzzle pre-places O cells');
+      const card = DailyPuzzle.generateShareCard(p1, 1);
+      assert(card && card.includes('ShapeBound Daily'), 'Share card contains game title');
+    });
+  }
+
+  // ---- Notation tests ----------------------------------------------------
+  function testNotation() {
+    suite('NOTATION', function () {
+      assertEqual(Notation.cellToAlgebraic(0, 0), 'A1', 'cell [0,0] is A1');
+      assertEqual(Notation.cellToAlgebraic(5, 5), 'F6', 'cell [5,5] is F6');
+      const parsed = Notation.algebraicToCell('C4');
+      assertEqual(parsed[0], 3, 'C4 row is 3');
+      assertEqual(parsed[1], 2, 'C4 col is 2');
+
+      const s = GameState.createInitialState({ boardSize: 6, maxActivePieces: 6 });
+      GameEngine.startGame(s);
+      GameEngine.applyMove(s, 2, 2); // C3
+      GameEngine.applyMove(s, 3, 3); // D4
+      const pgn = Notation.exportGame(s);
+      assert(pgn.includes('1. C3 D4'), 'PGN exports first move pair C3 D4');
+      const moves = Notation.parseMoves(pgn);
+      assertEqual(moves.length, 2, 'parseMoves parses 2 plies');
+      assertEqual(moves[0][0], 2, 'first ply row 2');
+      assertEqual(moves[0][1], 2, 'first ply col 2');
+    });
+  }
+
   function testRandomized() {
     suite('RANDOMIZED', function () {
       const r = runRandomGames(1000);
@@ -416,6 +516,10 @@
     testGameState();
     testAI();
     testReplay();
+    testThreatRadar();
+    testCodex();
+    testDailyPuzzle();
+    testNotation();
     testRandomized();
     const summary = {
       passed: passed, failed: failed, total: passed + failed,

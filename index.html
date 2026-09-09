@@ -41,9 +41,12 @@
         <div class="header-nav-group">
           <button id="btn-how-to-play" class="header-nav-btn" type="button" aria-expanded="false" aria-controls="how-to-play-panel">How to Play</button>
           <button id="btn-shape-guide" class="header-nav-btn" type="button" aria-expanded="false" aria-controls="shape-guide-panel">Shape Guide</button>
+          <button id="btn-codex" class="header-nav-btn" type="button" aria-expanded="false" aria-controls="codex-panel">Codex <span id="codex-badge" style="font-size:10px; opacity:0.8;">(0/35)</span></button>
+          <button id="btn-daily" class="header-nav-btn" type="button" aria-expanded="false" aria-controls="daily-puzzle-panel">Daily Puzzle</button>
           <button id="btn-game-lab" class="header-nav-btn" type="button" aria-expanded="false" aria-controls="game-lab-panel">Game Lab</button>
         </div>
         <span class="header-divider" aria-hidden="true"></span>
+        <button id="btn-sound" class="header-nav-btn" type="button" aria-label="Toggle Sound" title="Toggle Sound">🔊 Sound</button>
         <button id="btn-practice" class="header-practice-btn" type="button">Practice Game</button>
         <button id="btn-debug" class="header-nav-btn hidden" type="button" aria-pressed="false">Debug</button>
       </nav>
@@ -64,12 +67,12 @@
         <div class="score-grid">
           <div class="score-cell score-x">
             <span class="score-symbol" aria-hidden="true">X</span>
-            <span class="score-label">Player X</span>
+            <span class="score-label" id="score-label-x">Player X</span>
             <span id="score-x" class="score-value">0</span>
           </div>
           <div class="score-cell score-o">
             <span class="score-symbol" aria-hidden="true">O</span>
-            <span class="score-label">Player O</span>
+            <span class="score-label" id="score-label-o">Player O</span>
             <span id="score-o" class="score-value">0</span>
           </div>
           <div class="score-cell score-draw">
@@ -77,6 +80,9 @@
             <span class="score-label">Draws</span>
             <span id="score-draw" class="score-value">0</span>
           </div>
+        </div>
+        <div id="clock-bar-container" class="clock-bar-container hidden">
+          <div id="clock-bar-fill" class="clock-bar-fill" style="width: 100%;"></div>
         </div>
         <button id="btn-reset-stats" class="text-btn" type="button">Reset Statistics</button>
       </section>
@@ -91,12 +97,44 @@
             <option value="PRACTICE">Practice (vs AI)</option>
           </select>
         </label>
-        <label class="field">
+        <label class="field" id="field-player-select">
+          <span class="field-label">Play As</span>
+          <select id="select-player" class="select" aria-label="Select player letter">
+            <option value="1" selected>X (Plays First)</option>
+            <option value="2">O (Plays Second)</option>
+          </select>
+        </label>
+        <label class="field" id="field-difficulty">
           <span class="field-label">AI Difficulty</span>
           <select id="select-difficulty" class="select">
             <option value="EASY">Easy</option>
             <option value="NORMAL" selected>Normal</option>
             <option value="HARD">Hard</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Threat Radar</span>
+          <select id="select-threat-radar" class="select">
+            <option value="ON" selected>On (5/6 Threat Glow)</option>
+            <option value="OFF">Off (Master Mode)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Match Clock</span>
+          <select id="select-clock" class="select">
+            <option value="OFF" selected>Off (No Limit)</option>
+            <option value="15">15s Blitz</option>
+            <option value="30">30s Rapid</option>
+            <option value="60">1m Bullet</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Theme</span>
+          <select id="select-theme" class="select">
+            <option value="tactical" selected>Tactical Navy</option>
+            <option value="cyberpunk">Cyberpunk Neon</option>
+            <option value="blueprint">Blueprint Paper</option>
+            <option value="zen">Zen Wood & Stone</option>
           </select>
         </label>
         <div class="config-actions">
@@ -126,6 +164,8 @@
           <button id="btn-replay" class="secondary-btn" type="button">Replay</button>
           <button id="btn-analyze" class="secondary-btn" type="button">Analyze Game</button>
           <button id="btn-whatif" class="secondary-btn" type="button">What If?</button>
+          <button id="btn-export-game" class="secondary-btn" type="button">Export PGN</button>
+          <button id="btn-import-game" class="secondary-btn" type="button">Import Game</button>
         </div>
       </section>
     </aside>
@@ -269,11 +309,55 @@
       <p class="overlay-desc">Select a move in the log to branch from. The original game is preserved. Play alternate moves on the board below.</p>
       <div id="whatif-board" class="board whatif-board" role="grid" aria-label="What if board"></div>
       <div id="whatif-info" class="whatif-info" aria-live="polite"></div>
-      <div class="whatif-controls">
+      <div id="whatif-controls" class="whatif-controls">
         <button id="whatif-back" class="secondary-btn" type="button">Back to Original</button>
       </div>
     </div>
   </section>
+
+  <!-- Codex overlay -->
+  <section id="codex-panel" class="overlay-panel hidden" aria-label="Shape codex" aria-hidden="true">
+    <div class="overlay-panel-inner" style="max-width: 960px;">
+      <header class="overlay-header">
+        <h2>The Shape Codex (35 Hexominoes)</h2>
+        <button id="btn-close-codex" class="icon-btn" type="button" aria-label="Close codex">&times;</button>
+      </header>
+      <p class="overlay-desc">Discover and form all 35 free hexominoes in matches to unlock their cards and lore in your compendium.</p>
+      <div id="codex-grid" class="codex-grid"></div>
+    </div>
+  </section>
+
+  <!-- Daily Puzzle overlay -->
+  <section id="daily-puzzle-panel" class="overlay-panel hidden" aria-label="Daily puzzle" aria-hidden="true">
+    <div class="overlay-panel-inner" style="max-width: 480px; text-align: center;">
+      <header class="overlay-header">
+        <h2 id="daily-puzzle-title">Daily Tactical Puzzle</h2>
+        <button id="btn-close-daily" class="icon-btn" type="button" aria-label="Close daily puzzle">&times;</button>
+      </header>
+      <p id="daily-puzzle-desc" class="overlay-desc">Play the single winning move for X to complete today's target hexomino.</p>
+      <div class="daily-board-wrap">
+        <div id="daily-puzzle-board" class="board daily-puzzle-board" role="grid"></div>
+        <div id="daily-puzzle-status" class="daily-banner hidden"></div>
+      </div>
+      <div class="modal-actions" style="display: flex; gap: 10px; justify-content: center; margin-top: 10px;">
+        <button id="btn-daily-share" class="primary-btn hidden" type="button">Share Result (Emoji Card)</button>
+        <button id="btn-daily-reset" class="secondary-btn" type="button">Reset Puzzle</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Notation Import/Export dialog -->
+  <div id="notation-dialog" class="confirm-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="notation-dialog-title">
+    <div class="confirm-inner" style="max-width: 480px;">
+      <h3 id="notation-dialog-title">PGN Game Notation</h3>
+      <textarea id="notation-text" class="input" style="width: 100%; height: 140px; font-family: var(--mono); font-size: 11px; resize: vertical; margin: 12px 0;"></textarea>
+      <div class="confirm-actions">
+        <button id="btn-notation-copy" class="primary-btn" type="button">Copy to Clipboard</button>
+        <button id="btn-notation-apply" class="primary-btn hidden" type="button">Load into Replay</button>
+        <button id="btn-notation-close" class="secondary-btn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Debug panel -->
   <section id="debug-panel" class="debug-panel hidden" aria-label="Debug info" aria-hidden="true">
@@ -298,6 +382,10 @@
   </footer>
 
   <!-- Scripts: order matters (dependencies first) -->
+  <script src="js/audio.js?v=2"></script>
+  <script src="js/codex.js?v=2"></script>
+  <script src="js/daily-puzzle.js?v=2"></script>
+  <script src="js/notation.js?v=2"></script>
   <script src="js/shape-engine.js?v=2"></script>
   <script src="js/game-state.js?v=2"></script>
   <script src="js/game-engine.js?v=2"></script>
